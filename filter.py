@@ -1,153 +1,100 @@
 import socket
-import ssl
-import time
+import ipaddress
+import concurrent.futures
 import requests
-import base64
-import statistics
-import random
+from urllib.parse import urlparse
 
-MAX_NODES = 80
-TIMEOUT = 2.5
+# =========================
+# 1. YOUR SUB LINK
+# =========================
+SUB_URL = "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Splitted-By-Protocol/vless.txt"
 
-subs = open("subs.txt","r",encoding="utf-8").read().splitlines()
 
-nodes = []
+# =========================
+# 2. MCI / CDN RANGE LIST
+# (همونی که دادی)
+# =========================
+CDN_IPS = [
+    "23.211.53.248","2.16.53.35","184.86.2.78","104.66.72.213",
+    "23.58.201.211","2.22.0.41","2.21.200.81","104.66.76.103",
+    "95.100.183.211","92.123.122.13","23.207.120.215","104.66.125.77",
+    # ... ادامه لیست خودت (می‌تونی کامل بزاری)
+]
 
-# -----------------------
-# 1. LOAD SUBS
-# -----------------------
-for url in subs:
+CDN_SET = set(CDN_IPS)
+
+
+# =========================
+# 3. DOWNLOAD SUB
+# =========================
+def get_sub():
+    r = requests.get(SUB_URL, timeout=10)
+    return r.text.splitlines()
+
+
+# =========================
+# 4. EXTRACT HOST/IP FROM VLESS
+# =========================
+def extract_host(vless):
     try:
-        r = requests.get(url, timeout=10)
-        text = r.text.strip()
-
-        try:
-            decoded = base64.b64decode(text + "==").decode(errors="ignore")
-        except:
-            decoded = text
-
-        for line in decoded.splitlines():
-            if "vless://" in line or "vmess://" in line or "trojan://" in line:
-                nodes.append(line)
-
+        return urlparse(vless).hostname
     except:
-        continue
-
-nodes = nodes[:MAX_NODES]
-
-print("TOTAL NODES:", len(nodes))
+        return None
 
 
-# -----------------------
-# 2. PARSE
-# -----------------------
-parsed = []
+# =========================
+# 5. CHECK IF MATCH CDN LIST
+# =========================
+def is_in_list(ip):
+    return ip in CDN_SET
 
-for n in nodes:
+
+# =========================
+# 6. REAL TCP TEST (NO PING)
+# =========================
+def tcp_test(ip, port=443):
     try:
-        hp = n.split("@")[1]
-        host = hp.split(":")[0]
-        port = int(hp.split(":")[1].split("?")[0])
-        parsed.append((host, port, n))
+        s = socket.socket()
+        s.settimeout(2)
+        s.connect((ip, port))
+        s.close()
+        return True
     except:
-        continue
+        return False
 
 
-# -----------------------
-# 3. MCI MOBILE SIMULATION MODEL
-# -----------------------
-def mci_mobile_model(lat):
-    """
-    Simulates real mobile network behavior:
-    - jitter bursts
-    - congestion spikes
-    - unstable routing
-    """
+# =========================
+# 7. MAIN CHECK
+# =========================
+def check(vless):
+    ip = extract_host(vless)
+    if not ip:
+        return None
 
-    jitter = random.uniform(0, lat * 0.4)
-    spike = 0
+    if not is_in_list(ip):
+        return None
 
-    # occasional congestion spike (very important for MCI behavior)
-    if random.random() < 0.2:
-        spike = lat * random.uniform(0.5, 1.5)
+    if tcp_test(ip):
+        return vless
 
-    return lat + jitter + spike
+    return None
 
 
-# -----------------------
-# 4. TEST NODE
-# -----------------------
-def test_node(host, port):
-    samples = []
+# =========================
+# 8. RUN
+# =========================
+nodes = get_sub()
+print("TOTAL:", len(nodes))
 
-    for _ in range(3):
-        try:
-            start = time.time()
+good = []
 
-            sock = socket.create_connection((host, port), timeout=TIMEOUT)
-
-            ctx = ssl.create_default_context()
-            ssock = ctx.wrap_socket(sock, server_hostname=host)
-            ssock.close()
-
-            lat = time.time() - start
-
-            # simulate MCI network behavior
-            lat = mci_mobile_model(lat)
-
-            samples.append(lat)
-
-        except:
-            return None
-
-    avg = statistics.mean(samples)
-    jitter = statistics.pstdev(samples)
-
-    # MCI score model
-    stability = 1 / (avg + jitter * 2)
-    penalty = jitter * 1.8
-
-    score = stability - penalty
-
-    return avg, jitter, score
-
-
-# -----------------------
-# 5. RUN TESTS
-# -----------------------
-results = []
-
-for i, (host, port, node) in enumerate(parsed):
-    try:
-        res = test_node(host, port)
+with concurrent.futures.ThreadPoolExecutor(max_workers=50) as ex:
+    for i, res in enumerate(ex.map(check, nodes)):
+        print(f"{i+1}/{len(nodes)}")
         if res:
-            avg, jitter, score = res
-            results.append((score, avg, jitter, node))
+            good.append(res)
 
-        print(f"{i+1}/{len(parsed)}")
+print("GOOD NODES:", len(good))
 
-    except:
-        continue
-
-
-# -----------------------
-# 6. SORT & CLASSIFY
-# -----------------------
-results.sort(reverse=True)
-
-mci_best = [x[3] for x in results if x[0] > 2.8]
-mci_stable = [x[3] for x in results if 1.3 < x[0] <= 2.8]
-mci_weak = [x[3] for x in results if x[0] <= 1.3]
-
-
-# -----------------------
-# 7. OUTPUT
-# -----------------------
-open("mci_best.txt","w",encoding="utf-8").write("\n".join(mci_best))
-open("mci_stable.txt","w",encoding="utf-8").write("\n".join(mci_stable))
-open("mci_weak.txt","w",encoding="utf-8").write("\n".join(mci_weak))
-
-print("MCI BEST:", len(mci_best))
-print("MCI STABLE:", len(mci_stable))
-print("MCI WEAK:", len(mci_weak))
-print("DONE")
+with open("good.txt", "w") as f:
+    f.write("\n".join(good))
