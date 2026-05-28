@@ -1,1 +1,2 @@
-
+https://raw.githubusercontent.com/IranV2raySub/sub/main/sub.txt
+https://raw.githubusercontent.com/mahdibland/ShadowsocksAggregator/master/sub/sub_merge_base64.txt
