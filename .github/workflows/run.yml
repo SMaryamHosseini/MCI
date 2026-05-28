@@ -4,6 +4,10 @@ on:
   workflow_dispatch:
   push:
 
+concurrency:
+  group: update-sub
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,24 +27,20 @@ jobs:
         run: |
           pip install requests
 
-      - name: Run filter
+      - name: Run filter script
         run: |
           python filter.py
 
       - name: Configure Git
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Commit changes
+      - name: Commit changes safely
         run: |
           git add sub.txt mci_best.txt
           git commit -m "auto update" || echo "no changes"
 
-      - name: Sync with remote (IMPORTANT FIX)
-        run: |
-          git pull --rebase origin main
-
-      - name: Push changes
+      - name: Push (safe & clean)
         run: |
           git push origin main
