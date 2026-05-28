@@ -26,24 +26,16 @@ jobs:
     - name: Install dependencies
       run: pip install requests
 
-    - name: Run filter
+    - name: Run filter script
       run: python filter.py
 
-    - name: Commit and FORCE push
+    - name: Commit and push (FIXED)
       run: |
         git config --global user.name github-actions
         git config --global user.email actions@github.com
 
-        git add .
-
-        git commit -m "auto update" || echo "no changes"
-
-        git fetch origin main
-
-        git reset --hard origin/main || true
-
         git add mci.txt
 
-        git commit -m "update nodes" || echo "no changes"
+        git commit -m "auto update" || echo "no changes"
 
         git push --force origin main
