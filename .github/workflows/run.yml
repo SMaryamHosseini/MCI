@@ -1,43 +1,27 @@
-name: build-sub
+name: filter
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 */6 * * *"
 
 jobs:
-  build:
+  run:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+    - uses: actions/setup-python@v5
+      with:
+        python-version: 3.11
 
-      - name: Install dependencies
-        run: pip install requests
+    - run: pip install requests
 
-      - name: Run filter
-        run: python filter.py
+    - run: python filter.py
 
-      # 🔥 مهم: ساخت فایل ساب عمومی
-      - name: Create public sub file
-        run: cp mci_best.txt sub.txt
-
-      # 🔥 مهم: commit درست
-      - name: Commit & Push
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-
-          git add sub.txt mci_best.txt
-
-          git commit -m "update sub" || echo "no changes"
-
-          git pull --rebase origin main || true
-
-          git push
+    - run: |
+        git config user.name github-actions
+        git config user.email actions@github.com
+        git add good.txt
+        git commit -m "update" || echo "no changes"
+        git pull --rebase
+        git push
