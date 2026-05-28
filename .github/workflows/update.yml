@@ -1,3 +1,4 @@
+```yaml
 name: update
 
 on:
@@ -6,25 +7,37 @@ on:
   schedule:
     - cron: "*/30 * * * *"
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
 
-    - uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
-    - uses: actions/setup-python@v5
+    - name: Setup Python
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
+        python-version: "3.11"
 
-    - run: pip install requests
+    - name: Install
+      run: pip install requests
 
-    - run: python filter.py
+    - name: Run Filter
+      run: python filter.py
 
-    - run: |
-        git config --global user.name github-actions
-        git config --global user.email actions@github.com
+    - name: Commit Files
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "github-actions"
+
         git add .
-        git commit -m update || echo skip
+
+        git diff --cached --quiet || git commit -m "auto update"
+
         git push
+```
