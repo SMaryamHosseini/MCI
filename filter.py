@@ -1,171 +1,104 @@
 import requests
-import base64
 import re
 import socket
-import ssl
+import base64
 import time
-import subprocess
-from concurrent.futures import ThreadPoolExecutor
 
 SUB_LINKS = [
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/All_Configs_base64_Sub.txt"
 ]
 
-TIMEOUT = 1.2
-SNI = "www.google.com"
+PORT = 443
+TIMEOUT = 2
 
-ASN_API = "https://ipinfo.io/"
+# ISP hints (NOT strict, only labeling)
+ISP_HINTS = {
+    "mci": ["mcinet", "mci", "telecommunication"],
+    "irancell": ["irancell", "mtni", "mtn"],
+}
 
-mci = []
-irancell = []
-unstable = []
-
-def decode(text):
+def decode_base64_if_needed(text):
     try:
         return base64.b64decode(text).decode("utf-8", errors="ignore")
     except:
         return text
 
-def extract_ip(line):
-    m = re.search(r'@([\d\.]+):', line)
-    return m.group(1) if m else None
+def extract_ips(text):
+    # IPv4 regex
+    return re.findall(r'\b\d{1,3}(?:\.\d{1,3}){3}\b', text)
 
-
-# 🌐 REAL ASN CHECK
-def get_asn(ip):
+def tcp_check(ip, port=443):
     try:
-        r = requests.get(f"{ASN_API}{ip}/json", timeout=2)
-        data = r.json()
-        return data.get("org", "UNKNOWN")
-    except:
-        return "UNKNOWN"
-
-
-# 🌐 TRACEROUTE CHECK (light version)
-def trace(ip):
-    try:
-        result = subprocess.run(
-            ["traceroute", "-m", "10", ip],
-            capture_output=True,
-            text=True,
-            timeout=3
-        )
-        return result.stdout
-    except:
-        return ""
-
-
-# 🔐 TLS TEST
-def tls_test(ip):
-    try:
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-
-        s = socket.create_connection((ip, 443), timeout=TIMEOUT)
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(TIMEOUT)
-
         start = time.time()
-        ssl_sock = context.wrap_socket(s, server_hostname=SNI)
-        ssl_sock.close()
+        result = s.connect_ex((ip, port))
+        latency = int((time.time() - start) * 1000)
+        s.close()
 
-        return True, time.time() - start
+        if result == 0:
+            return True, latency
+        return False, -1
     except:
-        return False, None
+        return False, -1
 
+def guess_isp(ip):
+    # weak heuristic only (optional)
+    for isp, keywords in ISP_HINTS.items():
+        if any(k in ip.lower() for k in keywords):
+            return isp
+    return "unknown"
 
-def score(ip):
-    asn = get_asn(ip)
-    trace_data = trace(ip)
-    ok, lat = tls_test(ip)
-
-    if not ok:
-        return "BAD"
-
-    s = 0
-
-    # ASN scoring
-    if "MCI" in asn or "Telecommunication" in asn:
-        s += 4
-
-    if "Cloudflare" in asn:
-        s -= 3
-
-    # latency scoring
-    if lat < 0.2:
-        s += 3
-    elif lat < 0.5:
-        s += 1
-
-    # traceroute heuristic
-    if "10." in trace_data or "192.168" in trace_data:
-        s += 2
-
-    if s >= 5:
-        return "MCI"
-    elif s >= 2:
-        return "IRANCELL"
-    else:
-        return "UNSTABLE"
-
-
-def process(line):
-    if "vless://" not in line:
-        return None
-
-    ip = extract_ip(line)
-    if not ip:
-        return None
-
-    result = score(ip)
-
-    if result == "MCI":
-        return ("MCI", line)
-    elif result == "IRANCELL":
-        return ("IRANCELL", line)
-    else:
-        return ("UNSTABLE", line)
-
+good_mci = []
+good_irancell = []
+dead = []
 
 for sub in SUB_LINKS:
     print("FETCH:", sub)
 
-    raw = requests.get(sub, timeout=20).text
-    decoded = decode(raw)
+    try:
+        text = requests.get(sub, timeout=20).text
+        text = decode_base64_if_needed(text)
 
-    lines = decoded.splitlines()
-    print("TOTAL:", len(lines))
+        ips = extract_ips(text)
+        ips = list(set(ips))
 
-    results = []
+        print("TOTAL IPS:", len(ips))
 
-    with ThreadPoolExecutor(max_workers=30) as ex:
-        for r in ex.map(process, lines):
-            if r:
-                results.append(r)
+        for i, ip in enumerate(ips):
+            ok, ping = tcp_check(ip)
 
-for t, v in results:
-    if t == "MCI":
-        mci.append(v)
-    elif t == "IRANCELL":
-        irancell.append(v)
-    else:
-        unstable.append(v)
+            isp = guess_isp(ip)
 
-mci = list(set(mci))
-irancell = list(set(irancell))
-unstable = list(set(unstable))
+            print(f"{i+1}/{len(ips)} {ip} -> {ping}ms")
 
-print("MCI:", len(mci))
-print("IRANCELL:", len(irancell))
-print("UNSTABLE:", len(unstable))
+            if ok:
+                if isp == "mci":
+                    good_mci.append(ip)
+                elif isp == "irancell":
+                    good_irancell.append(ip)
+                else:
+                    # unknown but alive
+                    good_irancell.append(ip)
+            else:
+                dead.append(ip)
 
-with open("mci_best.txt", "w", encoding="utf-8") as f:
-    f.write("\n".join(mci))
+    except Exception as e:
+        print("ERROR:", e)
 
-with open("irancell.txt", "w", encoding="utf-8") as f:
-    f.write("\n".join(irancell))
+good_mci = list(set(good_mci))
+good_irancell = list(set(good_irancell))
 
-with open("sub.txt", "w", encoding="utf-8") as f:
-    f.write("\n".join(mci + irancell))
+with open("mci_best.txt", "w") as f:
+    for x in good_mci:
+        f.write(x + "\n")
 
+with open("irancell_best.txt", "w") as f:
+    for x in good_irancell:
+        f.write(x + "\n")
+
+print("\nRESULTS")
+print("MCI:", len(good_mci))
+print("IRANCELL:", len(good_irancell))
+print("DEAD:", len(dead))
 print("DONE")
