@@ -1,13 +1,13 @@
 import requests
 import base64
 import re
-from urllib.parse import unquote
+from urllib.parse import urlparse, parse_qs
 
 SUBS = [
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/All_Configs_base64_Sub.txt"
 ]
 
-domains = []
+good = set()
 
 # ---------- decode ----------
 def decode_sub(text):
@@ -16,22 +16,46 @@ def decode_sub(text):
     except:
         return text
 
-# ---------- extract host ----------
-def extract_host(cfg):
+# ---------- valid domain ----------
+def valid_domain(host):
 
-    # host=
-    m = re.search(r'host=([^&]+)', cfg, re.IGNORECASE)
+    host = host.strip().lower()
 
-    if m:
-        return unquote(m.group(1)).strip()
+    if len(host) > 60:
+        return False
 
-    # sni=
-    m = re.search(r'sni=([^&]+)', cfg, re.IGNORECASE)
+    if "#" in host:
+        return False
 
-    if m:
-        return unquote(m.group(1)).strip()
+    if " " in host:
+        return False
 
-    return None
+    if not re.match(r'^[a-z0-9\.\-]+$', host):
+        return False
+
+    if "." not in host:
+        return False
+
+    # حذف ip
+    if re.match(r'^\d+\.\d+\.\d+\.\d+$', host):
+        return False
+
+    # blacklist
+    bad = [
+        "cloudflare",
+        "akamai",
+        "cdn",
+        "workers",
+        "speedtest",
+        "google.com",
+        "play.google.com"
+    ]
+
+    for b in bad:
+        if b in host:
+            return False
+
+    return True
 
 # ---------- process ----------
 for sub in SUBS:
@@ -54,7 +78,6 @@ for sub in SUBS:
 
         line = line.strip()
 
-        # فقط vless
         if not line.startswith("vless://"):
             continue
 
@@ -64,14 +87,14 @@ for sub in SUBS:
         if "type=ws" not in lower:
             continue
 
-        # فقط بدون tls/reality
+        # فقط no tls
         if "security=tls" in lower:
             continue
 
         if "security=reality" in lower:
             continue
 
-        # فقط پورت 80/8080
+        # فقط 80/8080
         m = re.search(r'@[^:]+:(\d+)', line)
 
         if not m:
@@ -82,41 +105,36 @@ for sub in SUBS:
         if port not in ["80", "8080"]:
             continue
 
-        host = extract_host(line)
+        try:
 
-        if not host:
-            continue
+            parsed = urlparse(line)
 
-        # حذف CDN معروف
-        bad_words = [
-            "cloudflare",
-            "akamai",
-            "fastly",
-            "cdn",
-            "edge",
-            "workers"
-        ]
+            query = parse_qs(parsed.query)
 
-        skip = False
+            host = None
 
-        for b in bad_words:
-            if b in host.lower():
-                skip = True
-                break
+            if "host" in query:
+                host = query["host"][0]
 
-        if skip:
-            continue
+            elif "sni" in query:
+                host = query["sni"][0]
 
-        domains.append(host)
+            if not host:
+                continue
 
-# unique
-domains = sorted(list(set(domains)))
+            if valid_domain(host):
+                good.add(line)
 
-# save
-with open("mci_domains.txt", "w", encoding="utf-8") as f:
+        except:
+            pass
 
-    for d in domains:
-        f.write(d + "\n")
+# ---------- save ----------
+good = sorted(list(good))
+
+with open("mci.txt", "w", encoding="utf-8") as f:
+
+    for x in good:
+        f.write(x + "\n")
 
 print("DONE")
-print("DOMAINS:", len(domains))
+print("GOOD:", len(good))
