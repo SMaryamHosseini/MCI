@@ -1,29 +1,48 @@
-name: MCI Filter
+name: run-filter
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "*/30 * * * *"
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
+      - name: setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-    - run: pip install requests
+      - name: install deps
+        run: pip install requests
 
-    - run: python filter.py
+      - name: run filter
+        run: python filter.py
 
-    - name: commit
-      run: |
-        git config user.name "github-actions"
-        git config user.email "github-actions@github.com"
-        git add mci_best.txt sub.txt
-        git commit -m "update" || echo "no changes"
-        git push
+      - name: git config
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+      - name: add files
+        run: |
+          git add mci.txt irancell.txt dead.txt || true
+
+      - name: commit
+        run: |
+          git commit -m "update ISP results" || echo "no changes"
+
+      - name: pull rebase safe
+        run: |
+          git pull --rebase origin main || true
+
+      - name: push
+        run: |
+          git push origin main || true
