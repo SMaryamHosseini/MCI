@@ -1,104 +1,97 @@
 import requests
-import re
 import socket
-import base64
+import ssl
+import re
 import time
 
-SUB_LINKS = [
+SUBS = [
     "https://raw.githubusercontent.com/barry-far/V2ray-config/main/All_Configs_base64_Sub.txt"
 ]
 
-PORT = 443
 TIMEOUT = 2
 
-# ISP hints (NOT strict, only labeling)
-ISP_HINTS = {
-    "mci": ["mcinet", "mci", "telecommunication"],
-    "irancell": ["irancell", "mtni", "mtn"],
-}
-
-def decode_base64_if_needed(text):
-    try:
-        return base64.b64decode(text).decode("utf-8", errors="ignore")
-    except:
-        return text
-
+# ---------- extract IP ----------
 def extract_ips(text):
-    # IPv4 regex
-    return re.findall(r'\b\d{1,3}(?:\.\d{1,3}){3}\b', text)
+    return re.findall(r'@([\d\.]+):', text)
 
+# ---------- TCP test ----------
 def tcp_check(ip, port=443):
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s = socket.socket()
         s.settimeout(TIMEOUT)
-        start = time.time()
-        result = s.connect_ex((ip, port))
-        latency = int((time.time() - start) * 1000)
+        s.connect((ip, port))
         s.close()
-
-        if result == 0:
-            return True, latency
-        return False, -1
+        return True
     except:
-        return False, -1
+        return False
 
-def guess_isp(ip):
-    # weak heuristic only (optional)
-    for isp, keywords in ISP_HINTS.items():
-        if any(k in ip.lower() for k in keywords):
-            return isp
-    return "unknown"
+# ---------- TLS handshake test (strong signal) ----------
+def tls_check(ip, sni="www.google.com"):
+    try:
+        ctx = ssl.create_default_context()
+        s = socket.create_connection((ip, 443), timeout=TIMEOUT)
+        ssl_sock = ctx.wrap_socket(s, server_hostname=sni)
+        ssl_sock.close()
+        return True
+    except:
+        return False
 
-good_mci = []
-good_irancell = []
+# ---------- latency test ----------
+def latency(ip):
+    try:
+        start = time.time()
+        s = socket.create_connection((ip, 443), timeout=TIMEOUT)
+        s.close()
+        return (time.time() - start) * 1000
+    except:
+        return 9999
+
+reachable = []
 dead = []
 
-for sub in SUB_LINKS:
+for sub in SUBS:
     print("FETCH:", sub)
 
     try:
-        text = requests.get(sub, timeout=20).text
-        text = decode_base64_if_needed(text)
-
-        ips = extract_ips(text)
-        ips = list(set(ips))
-
-        print("TOTAL IPS:", len(ips))
-
-        for i, ip in enumerate(ips):
-            ok, ping = tcp_check(ip)
-
-            isp = guess_isp(ip)
-
-            print(f"{i+1}/{len(ips)} {ip} -> {ping}ms")
-
-            if ok:
-                if isp == "mci":
-                    good_mci.append(ip)
-                elif isp == "irancell":
-                    good_irancell.append(ip)
-                else:
-                    # unknown but alive
-                    good_irancell.append(ip)
-            else:
-                dead.append(ip)
-
+        raw = requests.get(sub, timeout=20).text
     except Exception as e:
-        print("ERROR:", e)
+        print("SUB ERROR:", e)
+        continue
 
-good_mci = list(set(good_mci))
-good_irancell = list(set(good_irancell))
+    ips = list(set(extract_ips(raw)))
+    print("TOTAL IPS:", len(ips))
 
-with open("mci_best.txt", "w") as f:
-    for x in good_mci:
-        f.write(x + "\n")
+    for i, ip in enumerate(ips):
+        print(f"{i+1}/{len(ips)} testing {ip}")
 
-with open("irancell_best.txt", "w") as f:
-    for x in good_irancell:
-        f.write(x + "\n")
+        # step 1: TCP
+        if not tcp_check(ip):
+            dead.append(ip)
+            continue
 
-print("\nRESULTS")
-print("MCI:", len(good_mci))
-print("IRANCELL:", len(good_irancell))
-print("DEAD:", len(dead))
+        # step 2: TLS (important for CDN reality)
+        if not tls_check(ip):
+            dead.append(ip)
+            continue
+
+        # step 3: latency score
+        ping = latency(ip)
+
+        reachable.append((ip, ping))
+
+# remove duplicates
+reachable = list(set(reachable))
+reachable.sort(key=lambda x: x[1])
+
+# ---------- save ----------
+with open("mci_reachable.txt", "w") as f:
+    for ip, ping in reachable:
+        f.write(f"{ip} | {int(ping)}ms\n")
+
+with open("dead.txt", "w") as f:
+    for ip in dead:
+        f.write(ip + "\n")
+
 print("DONE")
+print("REACHABLE:", len(reachable))
+print("DEAD:", len(dead))
