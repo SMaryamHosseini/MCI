@@ -19,7 +19,7 @@ jobs:
       - name: Install requests
         run: pip install requests
 
-      - name: Run finder
+      - name: Run filter
         run: |
           python filter.py
 
@@ -28,7 +28,7 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add result.txt
+          git add mci_best.txt sub.txt
 
           git commit -m "update result" || echo "no changes"
 
